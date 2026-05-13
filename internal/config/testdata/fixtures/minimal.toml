@@ -11,6 +11,7 @@ match_name_using_regex = false
 
 [general]
 destination = "/.config/hypr/monitors.conf"
+config_format = "hyprlang"
 debounce_time_ms = 3000
 
 [scoring]

@@ -206,6 +206,14 @@ func (t *TestConfig) WithDestination(dest string) *TestConfig {
 	return t
 }
 
+func (t *TestConfig) WithConfigFormat(format config.ConfigFormat) *TestConfig {
+	if t.cfg.General == nil {
+		t.cfg.General = &config.GeneralSection{}
+	}
+	t.cfg.General.ConfigFormat = utils.JustPtr(format)
+	return t
+}
+
 func (t *TestConfig) WithServiceDebounceTime(ms int) *TestConfig {
 	if t.cfg.General == nil {
 		t.cfg.General = &config.GeneralSection{}

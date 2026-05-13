@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"text/template"
 
@@ -89,8 +90,9 @@ func (s *Service) EditExisting(profileName string, currentMonitors []*hypr.Monit
 	}
 
 	templateData := map[string]any{
-		"Monitors":     currentMonitors,
-		"MonitorLines": s.ToHyprLines(currentMonitors),
+		"CommentPrefix": s.commentPrefix(),
+		"Monitors":      currentMonitors,
+		"MonitorLines":  s.ToConfigBlocks(currentMonitors, *s.cfg.Get().General.ConfigFormat),
 	}
 
 	var rendered bytes.Buffer
@@ -109,11 +111,6 @@ func (s *Service) EditExisting(profileName string, currentMonitors []*hypr.Monit
 // updateConfigFileWithContent reads the config file, finds TUI AUTO markers and replaces content between them,
 // or appends the content to the end if markers are not found
 func (s *Service) updateConfigFileWithContent(configFile, newContent string) error {
-	const (
-		startMarker = "# <<<<< TUI AUTO START"
-		endMarker   = "# <<<<< TUI AUTO END"
-	)
-
 	// nolint:gosec
 	existingContent, err := os.ReadFile(configFile)
 	if err != nil {
@@ -126,56 +123,76 @@ func (s *Service) updateConfigFileWithContent(configFile, newContent string) err
 	}
 
 	content := string(existingContent)
-	finalContent := s.newMethod(content, startMarker, endMarker, newContent)
+	finalContent := s.newMethod(content, s.tuiMarkerPairs(), newContent)
 	if err := utils.WriteAtomic(configFile, []byte(finalContent)); err != nil {
 		return fmt.Errorf("cant write new config: %w", err)
 	}
 	return nil
 }
 
-func (*Service) newMethod(content, startMarker, endMarker, newContent string) string {
-	startIdx := strings.Index(content, startMarker)
-	endIdx := strings.Index(content, endMarker)
-	if startIdx != -1 && endIdx != -1 && endIdx > startIdx {
-		beforeMarker := content[:startIdx]
-		afterMarker := content[endIdx+len(endMarker):]
+func (s *Service) commentPrefix() string {
+	if *s.cfg.Get().General.ConfigFormat == config.LuaConfigFormat {
+		return "--"
+	}
+	return "#"
+}
 
-		if !strings.HasSuffix(beforeMarker, "\n") && beforeMarker != "" {
-			beforeMarker += "\n"
-		}
+func (s *Service) tuiMarkerPairs() [][2]string {
+	activeStart := s.commentPrefix() + " <<<<< TUI AUTO START"
+	activeEnd := s.commentPrefix() + " <<<<< TUI AUTO END"
+	return [][2]string{
+		{activeStart, activeEnd},
+		{"# <<<<< TUI AUTO START", "# <<<<< TUI AUTO END"},
+		{"-- <<<<< TUI AUTO START", "-- <<<<< TUI AUTO END"},
+	}
+}
 
-		// Handle afterMarker content - prevent newline accumulation
-		switch {
-		case afterMarker == "":
-			// No content after markers - template already ends with newline, don't add more
-			afterMarker = ""
-		case strings.TrimSpace(afterMarker) == "":
-			// Only whitespace/newlines after markers (likely end of file) - don't accumulate
-			afterMarker = ""
-		default:
-			// There is real content after the markers - preserve reasonable spacing
-			// Find the first non-newline character
-			firstNonNewline := 0
-			for i, r := range afterMarker {
-				if r != '\n' {
-					firstNonNewline = i
-					break
+func (*Service) newMethod(content string, markerPairs [][2]string, newContent string) string {
+	for _, markers := range markerPairs {
+		startMarker, endMarker := markers[0], markers[1]
+		startIdx := strings.Index(content, startMarker)
+		endIdx := strings.Index(content, endMarker)
+		if startIdx != -1 && endIdx != -1 && endIdx > startIdx {
+			beforeMarker := content[:startIdx]
+			afterMarker := content[endIdx+len(endMarker):]
+
+			if !strings.HasSuffix(beforeMarker, "\n") && beforeMarker != "" {
+				beforeMarker += "\n"
+			}
+
+			// Handle afterMarker content - prevent newline accumulation
+			switch {
+			case afterMarker == "":
+				// No content after markers - template already ends with newline, don't add more
+				afterMarker = ""
+			case strings.TrimSpace(afterMarker) == "":
+				// Only whitespace/newlines after markers (likely end of file) - don't accumulate
+				afterMarker = ""
+			default:
+				// There is real content after the markers - preserve reasonable spacing
+				// Find the first non-newline character
+				firstNonNewline := 0
+				for i, r := range afterMarker {
+					if r != '\n' {
+						firstNonNewline = i
+						break
+					}
+				}
+				// If we found content, preserve up to 2 newlines (one for marker, one for spacing)
+				if firstNonNewline > 0 {
+					preservedNewlines := firstNonNewline
+					if preservedNewlines > 2 {
+						preservedNewlines = 2
+					}
+					afterMarker = strings.Repeat("\n", preservedNewlines) + strings.TrimLeft(afterMarker, "\n")
+				} else {
+					// No newlines at start, add one for spacing
+					afterMarker = "\n" + afterMarker
 				}
 			}
-			// If we found content, preserve up to 2 newlines (one for marker, one for spacing)
-			if firstNonNewline > 0 {
-				preservedNewlines := firstNonNewline
-				if preservedNewlines > 2 {
-					preservedNewlines = 2
-				}
-				afterMarker = strings.Repeat("\n", preservedNewlines) + strings.TrimLeft(afterMarker, "\n")
-			} else {
-				// No newlines at start, add one for spacing
-				afterMarker = "\n" + afterMarker
-			}
-		}
 
-		return beforeMarker + newContent + afterMarker
+			return beforeMarker + newContent + afterMarker
+		}
 	}
 
 	finalContent := content
@@ -211,8 +228,9 @@ func (s *Service) render(currentMonitors hypr.MonitorSpecs, profile *config.Prof
 	}
 
 	templateData := map[string]any{
-		"Monitors":     currentMonitors,
-		"MonitorLines": s.ToHyprLines(currentMonitors),
+		"CommentPrefix": s.commentPrefix(),
+		"Monitors":      currentMonitors,
+		"MonitorLines":  s.ToConfigBlocks(currentMonitors, *s.cfg.Get().General.ConfigFormat),
 	}
 
 	var rendered bytes.Buffer
@@ -350,4 +368,69 @@ func (s *Service) ToHyprLines(monitors hypr.MonitorSpecs) []string {
 	logrus.Debugf("Monitors freeze: %v", lines)
 
 	return lines
+}
+
+func (s *Service) ToConfigBlocks(monitors hypr.MonitorSpecs, format config.ConfigFormat) []string {
+	if format == config.LuaConfigFormat {
+		return s.ToLuaBlocks(monitors)
+	}
+	return s.ToHyprLines(monitors)
+}
+
+func (s *Service) ToLuaBlocks(monitors hypr.MonitorSpecs) []string {
+	blocks := []string{}
+	for _, monitor := range monitors {
+		blocks = append(blocks, s.toLuaBlock(monitor))
+	}
+	logrus.Debugf("Monitors freeze: %v", blocks)
+	return blocks
+}
+
+func (*Service) toLuaBlock(monitor *hypr.MonitorSpec) string {
+	identifier := monitor.Name
+	if monitor.Description != "" {
+		identifier = "desc:" + utils.EscapeHyprDescription(monitor.Description)
+	}
+
+	lines := []string{
+		"hl.monitor({",
+		fmt.Sprintf("    output = %s,", strconv.Quote(identifier)),
+	}
+
+	if monitor.Disabled {
+		lines = append(lines, "    disabled = true,")
+		lines = append(lines, "})")
+		return strings.Join(lines, "\n")
+	}
+
+	lines = append(lines,
+		fmt.Sprintf("    mode = %s,", strconv.Quote(fmt.Sprintf("%dx%d@%.5f", monitor.Width, monitor.Height, monitor.RefreshRate))),
+		fmt.Sprintf("    position = %s,", strconv.Quote(fmt.Sprintf("%dx%d", monitor.X, monitor.Y))),
+		fmt.Sprintf("    scale = %.8f,", monitor.Scale),
+		fmt.Sprintf("    transform = %d,", monitor.Transform),
+	)
+
+	if monitor.Vrr {
+		lines = append(lines, "    vrr = 1,")
+	} else {
+		lines = append(lines, "    vrr = 0,")
+	}
+	if monitor.TenBitdepth {
+		lines = append(lines, "    bitdepth = 10,")
+	}
+	if monitor.HasNonDefaultColorPreset() {
+		lines = append(lines, fmt.Sprintf("    cm = %s,", strconv.Quote(monitor.ColorPreset)))
+	}
+	if monitor.HDR() && monitor.SdrBrightness != 1.0 {
+		lines = append(lines, fmt.Sprintf("    sdrbrightness = %.2f,", monitor.SdrBrightness))
+	}
+	if monitor.HDR() && monitor.SdrSaturation != 1.0 {
+		lines = append(lines, fmt.Sprintf("    sdrsaturation = %.2f,", monitor.SdrSaturation))
+	}
+	if monitor.HasMirror() {
+		lines = append(lines, fmt.Sprintf("    mirror = %s,", strconv.Quote(monitor.Mirror)))
+	}
+
+	lines = append(lines, "})")
+	return strings.Join(lines, "\n")
 }

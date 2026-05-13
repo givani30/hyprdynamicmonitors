@@ -314,6 +314,13 @@ func TestGeneralSectionValidate(t *testing.T) {
 			},
 			expected: "/custom/path.conf",
 		},
+		{
+			name: "lua format is preserved",
+			general: &config.GeneralSection{
+				ConfigFormat: utils.JustPtr(config.LuaConfigFormat),
+			},
+			expected: "$HOME/.config/hypr/monitors.conf",
+		},
 	}
 
 	for _, tt := range tests {
@@ -327,8 +334,12 @@ func TestGeneralSectionValidate(t *testing.T) {
 				t.Error("destination should not be nil after validation")
 				return
 			}
+			if tt.general.ConfigFormat == nil {
+				t.Error("config format should not be nil after validation")
+				return
+			}
 
-			if tt.name == "nil destination gets default" {
+			if tt.name == "nil destination gets default" || tt.name == "lua format is preserved" {
 				if !containsString(*tt.general.Destination, ".config/hypr/monitors.conf") {
 					t.Errorf("expected destination to contain default path, got '%s'", *tt.general.Destination)
 				}
@@ -336,6 +347,9 @@ func TestGeneralSectionValidate(t *testing.T) {
 				if *tt.general.Destination != tt.expected {
 					t.Errorf("expected destination '%s', got '%s'", tt.expected, *tt.general.Destination)
 				}
+			}
+			if tt.name == "lua format is preserved" && *tt.general.ConfigFormat != config.LuaConfigFormat {
+				t.Errorf("expected lua config format, got '%s'", tt.general.ConfigFormat.Value())
 			}
 		})
 	}

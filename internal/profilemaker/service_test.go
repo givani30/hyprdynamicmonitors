@@ -206,3 +206,119 @@ func TestService_EditExisting(t *testing.T) {
 		})
 	}
 }
+
+func TestService_ToLuaBlocks(t *testing.T) {
+	monitors := []*hypr.MonitorSpec{
+		{
+			ID:          utils.IntPtr(1),
+			Name:        "monA",
+			Description: "New Monitor A",
+			Width:       2560,
+			Height:      1440,
+			RefreshRate: 120.0,
+			X:           0,
+			Y:           0,
+			Scale:       1.5,
+			Transform:   0,
+			Vrr:         false,
+		},
+		{
+			ID:            utils.IntPtr(2),
+			Name:          "monB",
+			Description:   "New Monitor B",
+			Width:         1920,
+			Height:        1080,
+			RefreshRate:   60.0,
+			X:             2560,
+			Y:             0,
+			Scale:         1.0,
+			Transform:     0,
+			Mirror:        "eDP-1",
+			Vrr:           true,
+			CurrentFormat: "XRGB2101010",
+			ColorPreset:   "hdr",
+			SdrBrightness: 1.1,
+			SdrSaturation: 0.98,
+		},
+		{
+			ID:          utils.IntPtr(3),
+			Name:        "monC",
+			Description: "",
+			Disabled:    true,
+		},
+	}
+
+	for _, monitor := range monitors {
+		require.NoError(t, monitor.Validate(), "monitor spec should be correct")
+	}
+
+	service := profilemaker.NewService(testutils.NewTestConfig(t).Get(), nil)
+	blocks := service.ToLuaBlocks(monitors)
+
+	require.Len(t, blocks, 3)
+	assert.Equal(t, `hl.monitor({
+    output = "desc:New Monitor A",
+    mode = "2560x1440@120.00000",
+    position = "0x0",
+    scale = 1.50000000,
+    transform = 0,
+    vrr = 0,
+})`, blocks[0])
+	assert.Contains(t, blocks[1], `    bitdepth = 10,`)
+	assert.Contains(t, blocks[1], `    cm = "hdr",`)
+	assert.Contains(t, blocks[1], `    mirror = "eDP-1",`)
+	assert.Equal(t, `hl.monitor({
+    output = "monC",
+    disabled = true,
+})`, blocks[2])
+}
+
+func TestService_EditExistingLuaConfigFormat(t *testing.T) {
+	tempDir := t.TempDir()
+	configFile := filepath.Join(tempDir, "test_config.lua")
+	require.NoError(t, os.WriteFile(configFile, []byte(`# <<<<< TUI AUTO START
+old()
+# <<<<< TUI AUTO END
+`), 0o600))
+
+	profileName := "test-profile"
+	profile := &config.Profile{
+		Name:       profileName,
+		ConfigFile: configFile,
+		ConfigType: utils.JustPtr(config.Template),
+		Conditions: &config.ProfileCondition{
+			RequiredMonitors: []*config.RequiredMonitor{
+				{Name: utils.StringPtr("eDP-1")},
+			},
+		},
+	}
+
+	cfg := testutils.NewTestConfig(t).
+		WithProfiles(map[string]*config.Profile{profileName: profile}).
+		WithConfigFormat(config.LuaConfigFormat).
+		Get()
+
+	monitors := []*hypr.MonitorSpec{
+		{
+			ID:          utils.IntPtr(1),
+			Name:        "monA",
+			Description: "New Monitor A",
+			Width:       2560,
+			Height:      1440,
+			RefreshRate: 120.0,
+			Scale:       1.5,
+		},
+	}
+	require.NoError(t, monitors[0].Validate(), "monitor spec should be correct")
+
+	service := profilemaker.NewService(cfg, nil)
+	require.NoError(t, service.EditExisting(profileName, monitors))
+
+	contents, err := os.ReadFile(configFile)
+	require.NoError(t, err)
+	assert.Contains(t, string(contents), `-- <<<<< TUI AUTO START`)
+	assert.Contains(t, string(contents), `hl.monitor({`)
+	assert.Contains(t, string(contents), `    output = "desc:New Monitor A",`)
+	assert.NotContains(t, string(contents), `monitor=`)
+	assert.NotContains(t, string(contents), `# <<<<< TUI AUTO START`)
+}

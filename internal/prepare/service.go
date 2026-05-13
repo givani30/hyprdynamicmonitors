@@ -39,8 +39,20 @@ func (s *Service) TruncateDestination() error {
 		return fmt.Errorf("cant read the %s destination file: %w", *file, err)
 	}
 
-	lines := strings.Split(string(contents), "\n")
+	newContents := s.filterDisabledMonitors(string(contents))
+	if err := utils.WriteAtomic(*file, []byte(newContents)); err != nil {
+		return fmt.Errorf("cant write to %s destination file: %w", *file, err)
+	}
 
+	return nil
+}
+
+func (s *Service) filterDisabledMonitors(contents string) string {
+	if *s.cfg.Get().General.ConfigFormat == config.LuaConfigFormat {
+		return s.filterDisabledLuaMonitors(contents)
+	}
+
+	lines := strings.Split(contents, "\n")
 	var filteredLines []string
 	for _, line := range lines {
 		if s.monitorDisableRegex.MatchString(line) {
@@ -50,10 +62,49 @@ func (s *Service) TruncateDestination() error {
 		filteredLines = append(filteredLines, line)
 	}
 
-	newContents := strings.Join(filteredLines, "\n")
-	if err := utils.WriteAtomic(*file, []byte(newContents)); err != nil {
-		return fmt.Errorf("cant write to %s destination file: %w", *file, err)
+	return strings.Join(filteredLines, "\n")
+}
+
+func (s *Service) filterDisabledLuaMonitors(contents string) string {
+	lines := strings.Split(contents, "\n")
+	filteredLines := []string{}
+
+	inMonitorBlock := false
+	blockLines := []string{}
+	blockDisabled := false
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if !inMonitorBlock && strings.HasPrefix(trimmed, "hl.monitor({") {
+			inMonitorBlock = true
+			blockLines = []string{line}
+			blockDisabled = false
+			continue
+		}
+
+		if inMonitorBlock {
+			blockLines = append(blockLines, line)
+			if strings.Contains(trimmed, "disabled = true") {
+				blockDisabled = true
+			}
+			if trimmed == "})" {
+				if blockDisabled {
+					logrus.Infof("Disabled monitor block will be removed: %s", strings.Join(blockLines, "\n"))
+				} else {
+					filteredLines = append(filteredLines, blockLines...)
+				}
+				inMonitorBlock = false
+				blockLines = nil
+			}
+			continue
+		}
+
+		filteredLines = append(filteredLines, line)
 	}
 
-	return nil
+	if inMonitorBlock {
+		filteredLines = append(filteredLines, blockLines...)
+	}
+
+	return strings.Join(filteredLines, "\n")
 }

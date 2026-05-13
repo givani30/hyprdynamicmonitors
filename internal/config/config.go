@@ -197,10 +197,11 @@ type DbusSignalMatchRule struct {
 }
 
 type GeneralSection struct {
-	Destination    *string `toml:"destination"`
-	DebounceTimeMs *int    `toml:"debounce_time_ms"`
-	PostApplyExec  *string `toml:"post_apply_exec"`
-	PreApplyExec   *string `toml:"pre_apply_exec"`
+	Destination    *string       `toml:"destination"`
+	ConfigFormat   *ConfigFormat `toml:"config_format"`
+	DebounceTimeMs *int          `toml:"debounce_time_ms"`
+	PostApplyExec  *string       `toml:"post_apply_exec"`
+	PreApplyExec   *string       `toml:"pre_apply_exec"`
 }
 
 type ScoringSection struct {
@@ -251,6 +252,44 @@ func (e *ConfigFileType) UnmarshalTOML(value any) error {
 }
 
 func (e *ConfigFileType) MarshalTOML() ([]byte, error) {
+	return []byte("\"" + e.Value() + "\""), nil
+}
+
+type ConfigFormat int
+
+const (
+	HyprlangConfigFormat ConfigFormat = iota
+	LuaConfigFormat
+)
+
+func (e ConfigFormat) Value() string {
+	switch e {
+	case HyprlangConfigFormat:
+		return "hyprlang"
+	case LuaConfigFormat:
+		return "lua"
+	}
+	return ""
+}
+
+var allConfigFormats = []ConfigFormat{HyprlangConfigFormat, LuaConfigFormat}
+
+func (e *ConfigFormat) UnmarshalTOML(value any) error {
+	sValue, ok := value.(string)
+	if !ok {
+		return fmt.Errorf("value %v is not a string type", value)
+	}
+	for _, enum := range allConfigFormats {
+		if enum.Value() == sValue {
+			*e = enum
+			return nil
+		}
+	}
+	return fmt.Errorf("invalid enum value, expecting one of %s",
+		utils.FormatEnumTypes(allConfigFormats))
+}
+
+func (e *ConfigFormat) MarshalTOML() ([]byte, error) {
 	return []byte("\"" + e.Value() + "\""), nil
 }
 
@@ -811,6 +850,10 @@ func (g *GeneralSection) Validate() error {
 
 	if g.DebounceTimeMs == nil {
 		g.DebounceTimeMs = utils.IntPtr(3000)
+	}
+
+	if g.ConfigFormat == nil {
+		g.ConfigFormat = utils.JustPtr(HyprlangConfigFormat)
 	}
 
 	return nil

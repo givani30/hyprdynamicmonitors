@@ -24,12 +24,14 @@ The configuration file is written in TOML and consists of several main sections:
 ```toml title="~/.config/hyprdynamicmonitors/config.toml"
 [general]
 destination = "$HOME/.config/hypr/monitors.conf"
+config_format = "hyprlang"
 debounce_time_ms = 1500
 pre_apply_exec = "notify-send 'Switching profile...'"
 post_apply_exec = "notify-send 'Profile applied'"
 ```
 
 - `destination` - Where the monitor configuration file will be created or linked
+- `config_format` - Output syntax for generated monitor config: `hyprlang` for `monitor = ...` lines or `lua` for `hl.monitor({ ... })` blocks
 - `debounce_time_ms` - Collect events for this duration before applying changes (prevents configuration thrashing, default: 1500ms)
 - `pre_apply_exec` - Command to run before applying configuration (optional)
 - `post_apply_exec` - Command to run after applying configuration (optional)
